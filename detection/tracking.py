@@ -21,7 +21,7 @@ from typing import Dict, Iterable, List, Tuple
 
 import numpy as np
 
-from .step1_detector import Detection
+from .frame_detector import Detection
 
 
 @dataclass

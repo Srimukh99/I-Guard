@@ -24,7 +24,7 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 
-from ..detection import Step1Detector, Step2Verifier, TrackManager
+from ..detection import FrameDetector, ClipVerifier, TrackManager
 from .camera_adapter import CameraAdapter
 from .ring_buffer import RingBuffer
 from .event_queue import Event, EventQueue
@@ -46,20 +46,20 @@ class InferencePipeline:
     def __init__(self, config: Dict, event_queue: EventQueue) -> None:
         self.config = config
         self.event_queue = event_queue
-        # Initialise Step1 detector
+        # Initialise per-frame detector
         step1_cfg = config.get("step1", {})
-        self.detector = Step1Detector(
+        self.detector = FrameDetector(
             model_path=step1_cfg.get("model_path", "yolov8n.pt"),
             input_size=step1_cfg.get("input_size", 640),
             classes=step1_cfg.get("classes", ["person", "gun", "knife"]),
             confidence_threshold=step1_cfg.get("confidence_threshold", 0.5),
             events_config=step1_cfg.get("events", {}),
         )
-        # Initialise Step2 verifier if enabled
+        # Initialise clip verifier if enabled
         step2_cfg = config.get("step2", {})
-        self.step2: Optional[Step2Verifier] = None
+        self.step2: Optional[ClipVerifier] = None
         if step2_cfg.get("enabled"):
-            self.step2 = Step2Verifier(
+            self.step2 = ClipVerifier(
                 model_path=step2_cfg.get("model_path", ""),
                 threshold=step2_cfg.get("verification_threshold", 0.7),
             )

@@ -29,9 +29,9 @@ class Event:
         Index of the frame in the global inference sequence.
     detections : Any
         Raw detection results (implementation‑specific).  This may be a
-        list of :class:`Detection` objects or other data structures.
+        list of detection objects or other data structures.
     flags : Dict[str, bool]
-        Event flags returned by :meth:`Step1Detector.analyze_events`.
+        Event flags returned by :meth:`FrameDetector.analyze_events`.
     """
 
     camera_id: str
