@@ -1,0 +1,58 @@
+---
+# Example configuration for ThreatDetect.
+
+# List of camera sources.  Each entry describes a unique stream.  The
+# `source` can be an integer (webcam index), a file path, or an RTSP/HTTP
+# URL.  Additional metadata (e.g. friendly name) can be added per camera.
+cameras:
+  - id: cam01
+    name: "Front entrance"
+    source: 0                  # Use webcam 0 by default; replace with RTSP URL.
+    fps: 15
+    resolution: [1280, 720]
+  - id: cam02
+    name: "Back exit"
+    source: "rtsp://username:password@192.168.0.100/stream"
+    fps: 15
+    resolution: [1280, 720]
+
+# Detection settings for Step 1.  Adjust thresholds to tune sensitivity.
+step1:
+  model_path: "models/yolov8n.engine"    # Path to TensorRT engine or ONNX file.
+  input_size: 640                        # Square input dimension for YOLO.
+  confidence_threshold: 0.5              # Minimum confidence to flag an object.
+  # List of classes to detect.  Use names from the model's label list.
+  classes: ["person", "gun", "knife"]
+  # Event flags toggle heuristics: pointing, firing, fall, assault, mass_shooter.
+  events:
+    pointing: true
+    firing: true
+    fall: true
+    assault: true
+    mass_shooter: true
+  # Pre/post buffer length in seconds for clip extraction.
+  pre_buffer_sec: 10
+  post_buffer_sec: 10
+
+# Verification settings for Step 2.  If omitted, verification will be skipped.
+step2:
+  enabled: false
+  model_path: "models/yolov8m.engine"  # Use a larger model for verification.
+  verification_threshold: 0.7
+
+# Web server configuration.  Bind address and port for the Flask UI.
+server:
+  host: "127.0.0.1"
+  port: 5000
+
+# Storage settings.  Directory for saving clips and logs.  Make sure the
+# directory exists and has write permissions.  Set `keep_days` to remove
+# old clips automatically.
+storage:
+  clips_dir: "clips"
+  logs_dir: "logs"
+  keep_days: 7
+
+# Advanced settings.  Do not modify unless you know what you are doing.
+advanced:
+  queue_maxsize: 64  # Maximum number of pending events in queue.

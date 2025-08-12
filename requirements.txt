@@ -1,0 +1,15 @@
+# Python dependencies for ThreatDetect
+
+flask>=2.3
+pillow>=10.0
+pyyaml>=6.0
+numpy>=1.23
+opencv-python>=4.8
+uvicorn[standard]>=0.23
+# The ultralytics package provides the YOLOv8 models and helpers.
+# If running on devices without CUDA, installation may fall back to CPU inference.
+ultralytics>=8.0
+# Optional: for message queue integration.  Comment out if Redis is not used.
+redis>=4.3
+# Optional: WebSocket support for live UI updates.  Uncomment if using Flask‑SocketIO.
+# flask‑socketio>=5.3
