@@ -1,0 +1,104 @@
+---
+# Example configuration for I‑Guard.
+
+# List of camera sources.  Each entry describes a unique stream.  The
+# ``source`` can be an integer (webcam index), a file path, or an RTSP/HTTP
+# URL.  Additional metadata (e.g. friendly name) can be added per camera.
+cameras:
+  - id: cam01
+    name: "Front entrance"
+    source: 0                  # Use webcam 0 by default; replace with RTSP URL.
+    fps: 15
+    resolution: [1280, 720]
+  - id: cam02
+    name: "Back exit"
+    source: "rtsp://username:password@192.168.0.100/stream"
+    fps: 15
+    resolution: [1280, 720]
+
+# Detection settings for Step 1.  Adjust thresholds to tune sensitivity.
+step1:
+  model_path: "models/yolov8n.engine"    # Path to TensorRT engine or ONNX file.
+  input_size: 640                        # Square input dimension for YOLO.
+  confidence_threshold: 0.5              # Minimum confidence to flag an object.
+  # List of classes to detect.  Use names from the model's label list.
+  classes: ["person", "gun", "knife"]
+  # Event flags toggle heuristics: pointing, firing, fall, assault, mass_shooter.
+  events:
+    pointing: true
+    firing: true
+    fall: true
+    assault: true
+    mass_shooter: true
+  # Pre/post buffer length in seconds for clip extraction.
+  pre_buffer_sec: 10
+  post_buffer_sec: 10
+  # Number of frames to skip between detections.  When greater than 0,
+  # detection runs only on every (frame_skip + 1)th frame.  This can
+  # improve throughput when many cameras are present at the cost of
+  # slightly increased latency.  Default 0.
+  frame_skip: 0
+  # Number of consecutive frames to accumulate before running detection.
+  # When set to N > 1, the pipeline will capture N frames into a small
+  # batch and then run detection once on either the final frame or the
+  # whole batch (depending on implementation).  Micro‑batching can
+  # improve throughput by amortising preprocessing overhead.  Default 1
+  # (no batching).
+  frame_batch_size: 1
+
+# Verification settings for Step 2.  If omitted, verification will be skipped.
+step2:
+  enabled: false
+  model_path: "models/yolov8m.engine"  # Use a larger model for verification.
+  verification_threshold: 0.7
+
+# Web server configuration.  Bind address and port for the Flask UI.
+server:
+  host: "127.0.0.1"
+  port: 5000
+
+# Storage settings.  Directory for saving clips and logs.  Make sure the
+# directory exists and has write permissions.  Set ``keep_days`` to remove
+# old clips automatically.
+storage:
+  clips_dir: "clips"
+  logs_dir: "logs"
+  keep_days: 7
+
+# Advanced settings.  Do not modify unless you know what you are doing.
+advanced:
+  queue_maxsize: 64  # Maximum number of pending events in queue.
+  # When set to true, the pipeline will use the DeepStream/GStreamer
+  # adapter instead of the default OpenCV adapter.  Each camera source
+  # should then be specified as a GStreamer pipeline string.  Requires
+  # GStreamer and DeepStream plugins to be installed.
+  use_deepstream: false
+  # Enable simple bounding-box tracking using the TrackManager.  When
+  # enabled, the tracker assigns persistent IDs to detections and can
+  # be used to suppress duplicate alerts.  Disable to reduce CPU
+  # overhead on very resource‑constrained devices.
+  tracking_enabled: false
+
+  # Dynamic backpressure controls.  When enabled, the pipeline adjusts
+  # the per‑camera frame skip based on the current event queue size.  If
+  # the queue is almost full, the frame skip will increase to reduce
+  # load; when the queue drains, it will decrease to improve
+  # responsiveness.  This prevents the system from being overwhelmed
+  # under bursty workloads.
+  dynamic_backpressure: false
+  # Minimum and maximum values for the dynamic frame skip.  The
+  # effective frame skip for each camera will always be clamped between
+  # these values.  The default min_skip of 0 means detection runs on
+  # every frame when the system is idle.  The default max_skip of 4
+  # limits detection to every 5th frame under heavy load.
+  min_frame_skip: 0
+  max_frame_skip: 4
+  # Queue watermarks for adjusting backpressure.  When the number of
+  # pending events exceeds ``high_watermark`` (fraction of
+  # ``queue_maxsize``), the frame skip is increased towards
+  # ``max_frame_skip``.  When it drops below ``low_watermark``, the skip
+  # is decreased towards ``min_frame_skip``.  Values are specified as
+  # floating‑point fractions between 0 and 1.  Defaults use 0.75 and
+  # 0.25.
+  backpressure_high_watermark: 0.75
+  backpressure_low_watermark: 0.25

@@ -1,0 +1,25 @@
+; Config file for DeepStream YOLO object detector
+; This file is used by the nvinfer plugin in the DeepStream pipeline.
+; Update the paths to your TensorRT engine, ONNX file and labels as needed.
+
+[property]
+gpu-id=0
+batch-size=1
+network-mode=2         ; FP16 precision (0: INT8, 1: FP32, 2: FP16)
+process-mode=1         ; 0: secondary GIE, 1: primary GIE
+interval=0             ; Run inference on every frame
+gie-unique-id=1
+network-type=0         ; 0: Detector, 1: Classifier, 2: Segmentation
+enable-dla=0
+model-engine-file=models/yolov8n.engine
+onnx-file=models/yolov8n.onnx
+labelfile-path=models/coco.names
+num-detected-classes=80
+is-classifier=0
+maintain-aspect-ratio=0
+symmetric-padding=0
+
+[class-attrs-all]
+pre-cluster-threshold=0.5
+nms-iou-threshold=0.4
+topk=300
