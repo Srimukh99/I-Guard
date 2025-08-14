@@ -30,7 +30,7 @@ import os
 
 import numpy as np
 
-from ..detection import FrameDetector, ClipVerifier, TrackManager
+from detection import FrameDetector, ClipVerifier, TrackManager
 from .deepstream_pipeline import DeepStreamPipeline
 from .camera_adapter import CameraAdapter
 from .deepstream_adapter import DeepStreamAdapter

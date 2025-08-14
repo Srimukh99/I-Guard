@@ -1,0 +1,12 @@
+# Test dependencies for I-Guard
+
+# Core test framework
+pytest>=7.0.0
+pytest-mock>=3.10.0
+pytest-cov>=4.0.0
+
+# For async testing
+pytest-asyncio>=0.21.0
+
+# Mock and testing utilities  
+responses>=0.23.0

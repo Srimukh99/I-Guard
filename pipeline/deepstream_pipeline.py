@@ -44,22 +44,29 @@ import sys
 import threading
 from typing import Callable, Dict, List, Optional
 
-import gi  # type: ignore
-gi.require_version("Gst", "1.0")
-from gi.repository import Gst, GLib
+try:
+    import gi  # type: ignore
+    gi.require_version("Gst", "1.0")
+    from gi.repository import Gst, GLib  # type: ignore
+    HAS_GSTREAMER = True
+except ImportError:
+    gi = None
+    Gst = None 
+    GLib = None
+    HAS_GSTREAMER = False
 
 try:
     import pyds  # type: ignore
-except ImportError as exc:  # pragma: no cover
-    raise ImportError(
-        "DeepStream Python bindings (pyds) are required to use DeepStreamPipeline.\n"
-        "Install them via your package manager (e.g. apt install python3-pyds)."
-    ) from exc
+    HAS_PYDS = True
+except ImportError:
+    pyds = None
+    HAS_PYDS = False
 
 from .event_queue import EventQueue, Event
 
-# Initialise GStreamer once.
-Gst.init(None)
+# Initialise GStreamer once if available
+if HAS_GSTREAMER:
+    Gst.init(None)
 
 LOGGER = logging.getLogger(__name__)
 

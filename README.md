@@ -69,6 +69,35 @@ I-Guard/
 
    Open your browser at [http://localhost:5000](http://localhost:5000) to see the dashboard.
 
+## Testing
+
+I‑Guard includes a comprehensive end‑to‑end test suite that validates the complete pipeline flow without requiring GPU resources or model dependencies.
+
+### Running Tests
+
+```bash
+# Activate virtual environment
+source venv/bin/activate
+
+# Run basic test suite (no additional dependencies required)
+python run_tests.py
+
+# For advanced testing with pytest (optional)
+pip install -r requirements-test.txt
+pytest tests/ -v
+```
+
+### Test Coverage
+
+The test suite includes:
+
+* **Mock Components** – Synthetic camera, detector, and verifier for dependency-free testing
+* **Pipeline Integration** – Complete flow from frame capture through threat verification
+* **Event Processing** – Queue management and event history tracking
+* **Performance Validation** – Async Stage-2 pipeline performance improvements
+
+See `tests/README.md` for detailed testing documentation.
+
 ## Contributing
 
 We welcome pull requests and issues. Please see `LICENSE` for licence details. When contributing code, try to follow the PEP 8 style guide and include docstrings. For long‑running enhancements (e.g. new models or platforms), please open an issue first to discuss direction.
