@@ -2,8 +2,11 @@
 # Example configuration for I‑# Detection settings for Step 1 (us# Verification settings for Step 2.  If omitted, verification will be skipped.
 step2:
   enabled: true
-  model_path: "models/yolo11m.engine"  # Use a larger model for verification.
-  verification_threshold: 0.7ly in 'python' mode).  Adjust thresholds to tune sensitivity.
+  model_path: "models/tao_action_recognition.engine"  # TAO ActionRecognitionNet TensorRT engine
+  model_type: "tao"  # Options: "tao" (default), "x3d", "simple"
+  verification_threshold: 0.7
+  input_size: [224, 224]  # Spatial dimensions (H, W)
+  temporal_size: 16  # Number of frames to sample from cliply in 'python' mode).  Adjust thresholds to tune sensitivity.
 step1:
   model_path: "models/yolo11s.engine"    # Path to TensorRT engine or ONNX file.
   input_size: 640                        # Square input dimension for YOLO.

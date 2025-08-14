@@ -9,6 +9,19 @@ uvicorn[standard]>=0.23
 # The ultralytics package provides the YOLOv8 models and helpers.
 # If running on devices without CUDA, installation may fall back to CPU inference.
 ultralytics>=8.0
+
+# 3D CNN dependencies for Step 2 verification (optional)
+torch>=1.12.0
+torchvision>=0.13.0
+pytorchvideo>=0.1.5
+
+# TensorRT dependencies (Jetson only - install via JetPack)
+# tensorrt>=8.0.0
+# pycuda>=2021.1
+
+# DeepStream Python bindings (Jetson only) 
+# Install via: sudo apt install python3-gi python3-gst-1.0
+
 # Optional: for message queue integration.  Comment out if Redis is not used.
 redis>=4.3
 # Optional: WebSocket support for live UI updates.  Uncomment if using Flask‑SocketIO.

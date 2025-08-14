@@ -1,0 +1,6 @@
+normal
+threatening_with_weapon
+pointing_weapon
+firing_weapon
+assault
+fighting
