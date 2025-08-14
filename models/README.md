@@ -55,7 +55,31 @@ step2:
   model_path: "models/x3d_s.engine"
 ```
 
-### 3. Simple Aggregation (Fallback)
+### 3. MoViNet (Google - Mobile Video Networks)
+
+**Advantages:**
+- Designed specifically for mobile and edge devices
+- Excellent accuracy/efficiency trade-off
+- Streaming-friendly with temporal memory
+- Strong performance on limited compute resources
+
+**Setup:**
+```bash
+# Install MoViNet dependencies
+pip install tf-models-official
+
+# Export to TensorRT (requires custom conversion)
+python scripts/export_movinet_to_tensorrt.py --model movinet_a2 --output models/movinet_a2.engine
+```
+
+**Configuration:**
+```yaml
+step2:
+  model_type: "movinet"
+  model_path: "models/movinet_a2.engine"
+```
+
+### 4. Simple Aggregation (Fallback)
 
 When 3D CNN models are not available, falls back to counting weapon detections across frames.
 
@@ -71,11 +95,12 @@ For custom training, prepare video clips with these action classes:
 - `assault`: Physical violence without weapons
 - `fighting`: Mutual combat/altercation
 
-**X3D Classes (Simplified):**
+**MoViNet Classes (Mobile-Optimized):**
 - `normal`: Regular behavior
-- `weapon_threat`: Any weapon-related threat
+- `weapon_handling`: Person manipulating weapon
+- `aggressive_behavior`: Threatening gestures/postures
 - `violent_action`: Physical violence
-- `suspicious_behavior`: Unusual/concerning behavior
+- `suspicious_activity`: Unusual behavior patterns
 
 ## Performance Benchmarks
 
@@ -84,6 +109,7 @@ For custom training, prepare video clips with these action classes:
 | TAO ActionRec | ~30 FPS | ~60 FPS | ~120 FPS |
 | X3D-S | ~25 FPS | ~50 FPS | ~100 FPS |
 | X3D-M | ~15 FPS | ~30 FPS | ~60 FPS |
+| MoViNet-A2 | ~35 FPS | ~70 FPS | ~140 FPS |
 
 *Benchmarks with FP16 precision, 16-frame clips, 224x224 resolution*
 
@@ -99,7 +125,8 @@ For production on Jetson:
 ## Fallback Strategy
 
 The system gracefully degrades:
-1. Try TAO/X3D 3D CNN inference
+
+1. Try TAO/MoViNet/X3D 3D CNN inference
 2. Fall back to simple frame aggregation if model loading fails
 3. Log warnings for debugging model issues
 

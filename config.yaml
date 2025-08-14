@@ -3,7 +3,7 @@
 step2:
   enabled: true
   model_path: "models/tao_action_recognition.engine"  # TAO ActionRecognitionNet TensorRT engine
-  model_type: "tao"  # Options: "tao" (default), "x3d", "simple"
+  model_type: "tao"  # Options: "tao" (default), "x3d", "movinet", "simple"
   verification_threshold: 0.7
   input_size: [224, 224]  # Spatial dimensions (H, W)
   temporal_size: 16  # Number of frames to sample from cliply in 'python' mode).  Adjust thresholds to tune sensitivity.

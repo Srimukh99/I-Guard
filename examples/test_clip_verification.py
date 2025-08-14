@@ -68,6 +68,28 @@ def test_x3d_verifier():
     
     return result
 
+def test_movinet_verifier():
+    """Test MoViNet verifier."""
+    print("\n=== Testing MoViNet ===")
+    
+    verifier = ClipVerifier(
+        model_path="models/movinet_a2.engine",
+        model_type="movinet",
+        threshold=0.6
+    )
+    
+    # Create mock video clip
+    video_clip = create_mock_video_clip()
+    
+    # Run verification
+    result = verifier.verify(video_clip)
+    
+    print(f"MoViNet Results: {result}")
+    print(f"Predicted Action: {result['action']}")
+    print(f"Overall Threat Score: {result['score']:.3f}")
+    
+    return result
+
 def test_simple_verifier():
     """Test simple aggregation fallback."""
     print("\n=== Testing Simple Aggregation Fallback ===")
@@ -106,18 +128,19 @@ def main():
     
     # Test all verifier types
     tao_result = test_tao_verifier()
-    x3d_result = test_x3d_verifier() 
+    x3d_result = test_x3d_verifier()
+    movinet_result = test_movinet_verifier()
     simple_result = test_simple_verifier()
     
     print("\n=== Summary ===")
-    print(f"TAO Threat Score:    {tao_result['score']:.3f}")
-    print(f"X3D Threat Score:    {x3d_result['score']:.3f}")  
-    print(f"Simple Threat Score: {simple_result['score']:.3f}")
+    print(f"TAO Threat Score:     {tao_result['score']:.3f}")
+    print(f"X3D Threat Score:     {x3d_result['score']:.3f}")
+    print(f"MoViNet Threat Score: {movinet_result['score']:.3f}")
+    print(f"Simple Threat Score:  {simple_result['score']:.3f}")
     
     # Determine if event should be escalated
     threshold = 0.7
-    escalate = any(result['score'] > threshold for result in [tao_result, x3d_result, simple_result])
-    
+    escalate = any(result["score"] > threshold for result in [tao_result, x3d_result, movinet_result, simple_result])
     print(f"\nEscalate to human review: {'YES' if escalate else 'NO'}")
 
 if __name__ == "__main__":

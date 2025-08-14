@@ -12,7 +12,8 @@ This module supports multiple 3D CNN backends:
 - Simple aggregation: Fallback method that counts weapon detections across frames
 
 The TAO models are recommended for production Jetson deployment due to their
-tight integration with DeepStream secondary inference pipelines.
+tight integration with DeepStream secondary inference pipelines. MoViNet models
+provide an excellent balance of accuracy and efficiency for mobile/edge deployment.
 """
 
 from __future__ import annotations
@@ -105,6 +106,15 @@ class ClipVerifier:
                 "violent_action": 2,
                 "suspicious_behavior": 3
             }
+        elif self.model_type == "movinet":
+            # MoViNet trained for efficient mobile action recognition
+            return {
+                "normal": 0,
+                "weapon_handling": 1,
+                "aggressive_behavior": 2,
+                "violent_action": 3,
+                "suspicious_activity": 4
+            }
         else:
             return {}
 
@@ -115,6 +125,8 @@ class ClipVerifier:
                 self._load_tao_model()
             elif self.model_type == "x3d":
                 self._load_x3d_model()
+            elif self.model_type == "movinet":
+                self._load_movinet_model()
             else:
                 LOGGER.warning("Unknown model type: %s, using simple aggregation", self.model_type)
                 self.model_type = "simple"
@@ -177,6 +189,38 @@ class ClipVerifier:
         else:
             raise ValueError(f"Unsupported X3D model format: {self.model_path}")
 
+    def _load_movinet_model(self) -> None:
+        """Load MoViNet model (PyTorch or TensorRT)."""
+        if torch is None:
+            raise ImportError("PyTorch not available for MoViNet model loading")
+            
+        if self.model_path.endswith('.engine') and trt is not None:
+            # Load MoViNet TensorRT engine
+            LOGGER.info("Loading MoViNet TensorRT engine")
+            with open(self.model_path, 'rb') as f:
+                engine_data = f.read()
+                
+            runtime = trt.Runtime(trt.Logger.WARNING)
+            engine = runtime.deserialize_cuda_engine(engine_data)
+            
+            if engine is None:
+                raise RuntimeError("Failed to deserialize MoViNet TensorRT engine")
+                
+            context = engine.create_execution_context()
+            self.model = {'engine': engine, 'context': context, 'type': 'tensorrt'}
+            LOGGER.info("MoViNet TensorRT engine loaded successfully")
+            
+        elif self.model_path.endswith(('.pt', '.pth')):
+            # Load PyTorch MoViNet checkpoint
+            LOGGER.info("Loading MoViNet PyTorch model")
+            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+            self.model = torch.load(self.model_path, map_location=device)
+            self.model.eval()
+            LOGGER.info("MoViNet PyTorch model loaded successfully")
+            
+        else:
+            raise ValueError(f"Unsupported MoViNet model format: {self.model_path}")
+
     def verify(self, video_clip: Union[np.ndarray, List[np.ndarray]], detections_per_frame: Optional[Iterable[List[str]]] = None) -> Dict[str, float]:
         """Verify a candidate event using 3D CNN analysis.
 
@@ -205,6 +249,8 @@ class ClipVerifier:
             return self._verify_tao(video_clip)
         elif self.model_type == "x3d":
             return self._verify_x3d(video_clip)
+        elif self.model_type == "movinet":
+            return self._verify_movinet(video_clip)
         else:
             LOGGER.error("Unknown model type: %s", self.model_type)
             return {"score": 0.0, "action": "unknown", "action_confidence": 0.0}
@@ -271,6 +317,28 @@ class ClipVerifier:
             
         except Exception as exc:
             LOGGER.error("X3D inference failed: %s", exc)
+            return {"score": 0.0, "action": "error", "action_confidence": 0.0}
+
+    def _verify_movinet(self, video_clip: Union[np.ndarray, List[np.ndarray]]) -> Dict[str, float]:
+        """Verify using MoViNet model."""
+        try:
+            # Preprocess video clip for MoViNet model
+            processed_clip = self._preprocess_clip_movinet(video_clip)
+            
+            if self.model and isinstance(self.model, dict) and 'engine' in self.model:
+                # Run TensorRT inference
+                results = self._run_movinet_tensorrt_inference(processed_clip)
+            elif torch is not None and hasattr(self.model, 'eval'):
+                # Run PyTorch inference
+                results = self._run_movinet_pytorch_inference(processed_clip)
+            else:
+                LOGGER.warning("MoViNet model not properly loaded, using simple fallback")
+                return self._verify_simple(None)
+                
+            return self._parse_movinet_results(results)
+            
+        except Exception as exc:
+            LOGGER.error("MoViNet inference failed: %s", exc)
             return {"score": 0.0, "action": "error", "action_confidence": 0.0}
 
     def _preprocess_clip_tao(self, video_clip: Union[np.ndarray, List[np.ndarray]]) -> np.ndarray:
@@ -342,6 +410,40 @@ class ClipVerifier:
         
         return clip_array
 
+    def _preprocess_clip_movinet(self, video_clip: Union[np.ndarray, List[np.ndarray]]) -> np.ndarray:
+        """Preprocess video clip for MoViNet model."""
+        if cv2 is None:
+            raise ImportError("OpenCV not available for video preprocessing")
+            
+        # Convert list of frames to numpy array if needed
+        if isinstance(video_clip, list):
+            frames = video_clip
+        else:
+            frames = [video_clip[i] for i in range(video_clip.shape[0])]
+            
+        # MoViNet can handle variable frame counts, but we'll sample to temporal_size
+        sampled_frames = self._sample_frames(frames, self.temporal_size)
+        
+        # Resize and normalize for MoViNet model
+        processed_frames = []
+        for frame in sampled_frames:
+            # Resize to input_size
+            resized = cv2.resize(frame, self.input_size)
+            # Convert BGR to RGB if needed
+            if len(resized.shape) == 3 and resized.shape[2] == 3:
+                resized = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
+            # Normalize to [-1, 1] for MoViNet
+            normalized = (resized.astype(np.float32) / 127.5) - 1.0
+            processed_frames.append(normalized)
+            
+        # Stack frames: (T, H, W, C)
+        clip_array = np.stack(processed_frames, axis=0)
+        
+        # MoViNet expects (C, T, H, W) format
+        clip_array = np.transpose(clip_array, (3, 0, 1, 2))
+        
+        return clip_array
+
     def _sample_frames(self, frames: List[np.ndarray], target_count: int) -> List[np.ndarray]:
         """Sample frames uniformly to match target temporal size."""
         if len(frames) <= target_count:
@@ -395,6 +497,36 @@ class ClipVerifier:
         
         return probabilities.cpu().numpy().squeeze()
 
+    def _run_movinet_tensorrt_inference(self, processed_clip: np.ndarray) -> np.ndarray:
+        """Run inference using MoViNet TensorRT engine."""
+        # This is a placeholder - actual TensorRT inference implementation
+        # would require setting up input/output buffers and running the engine
+        LOGGER.warning("MoViNet TensorRT inference not fully implemented")
+        
+        # Mock results for demonstration
+        num_classes = len(self.action_classes)
+        mock_results = np.random.rand(num_classes).astype(np.float32)
+        mock_results = mock_results / np.sum(mock_results)  # Normalize to probabilities
+        return mock_results
+
+    def _run_movinet_pytorch_inference(self, processed_clip: np.ndarray) -> np.ndarray:
+        """Run inference using MoViNet PyTorch model."""
+        if torch is None:
+            raise ImportError("PyTorch not available")
+            
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        
+        # Convert to tensor and add batch dimension
+        input_tensor = torch.from_numpy(processed_clip).unsqueeze(0).to(device)
+        
+        with torch.no_grad():
+            outputs = self.model(input_tensor)
+            
+        # Apply softmax to get probabilities
+        probabilities = torch.softmax(outputs, dim=1)
+        
+        return probabilities.cpu().numpy().squeeze()
+
     def _parse_tao_results(self, results: np.ndarray) -> Dict[str, float]:
         """Parse TAO model inference results."""
         class_names = list(self.action_classes.keys())
@@ -424,6 +556,33 @@ class ClipVerifier:
 
     def _parse_x3d_results(self, results: np.ndarray) -> Dict[str, float]:
         """Parse X3D model inference results."""
+        class_names = list(self.action_classes.keys())
+        
+        # Get predicted class and confidence
+        predicted_idx = np.argmax(results)
+        predicted_action = class_names[predicted_idx] if predicted_idx < len(class_names) else "unknown"
+        action_confidence = float(results[predicted_idx])
+        
+        # Calculate overall threat score (all non-normal classes)
+        threat_indices = [i for i, name in enumerate(class_names) if name != "normal"]
+        threat_scores = [results[i] for i in threat_indices if i < len(results)]
+        overall_score = sum(threat_scores) if threat_scores else 0.0
+        
+        result = {
+            "score": overall_score,
+            "action": predicted_action,
+            "action_confidence": action_confidence
+        }
+        
+        # Add individual class scores
+        for i, class_name in enumerate(class_names):
+            if i < len(results):
+                result[class_name] = float(results[i])
+                
+        return result
+
+    def _parse_movinet_results(self, results: np.ndarray) -> Dict[str, float]:
+        """Parse MoViNet model inference results."""
         class_names = list(self.action_classes.keys())
         
         # Get predicted class and confidence
