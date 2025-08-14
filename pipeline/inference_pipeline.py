@@ -13,6 +13,11 @@ This pipeline is intentionally simple; more sophisticated scheduling
 (e.g. GPU resource pooling or batching) can be added as needed.  Each
 camera has its own ring buffer but shares the Step 1 detector and
 Step 2 verifier to reuse GPU memory.
+Notes:
+- The pipeline intentionally separates capture, detection and verification
+    to keep the CPU/GPU workloads isolated. Async Stage-2 verification
+    is available to avoid blocking the consumer thread when running heavy
+    3D CNN models.
 """
 
 from __future__ import annotations
@@ -31,6 +36,8 @@ from .camera_adapter import CameraAdapter
 from .deepstream_adapter import DeepStreamAdapter
 from .ring_buffer import RingBuffer
 from .event_queue import Event, EventQueue
+from .async_stage2 import AsyncStage2Pipeline
+from .async_result_handler import AsyncResultHandler
 
 # Metrics instrumentation using the Prometheus client.  These metrics
 # provide insight into the health and performance of the pipeline when
@@ -114,11 +121,35 @@ class InferencePipeline:
         # Initialise clip verifier if enabled
         step2_cfg = config.get("step2", {})
         self.step2: Optional[ClipVerifier] = None
+        self.async_stage2: Optional[AsyncStage2Pipeline] = None
+        self.async_result_handler: Optional[AsyncResultHandler] = None
+        
         if step2_cfg.get("enabled"):
-            self.step2 = ClipVerifier(
-                model_path=step2_cfg.get("model_path", ""),
-                threshold=step2_cfg.get("verification_threshold", 0.7),
-            )
+            # Check if async processing is enabled
+            async_enabled = step2_cfg.get("async_enabled", False)
+            
+            if async_enabled:
+                # Use async Stage-2 pipeline
+                self.async_stage2 = AsyncStage2Pipeline(
+                    model_path=step2_cfg.get("model_path", ""),
+                    threshold=step2_cfg.get("verification_threshold", 0.7),
+                    max_workers=step2_cfg.get("max_workers", 2),
+                    queue_size=step2_cfg.get("queue_size", 50),
+                    result_queue_size=step2_cfg.get("result_queue_size", 100),
+                    worker_timeout=step2_cfg.get("worker_timeout_sec", 10.0),
+                    model_type=step2_cfg.get("model_type", "tao"),
+                    input_size=step2_cfg.get("input_size", [224, 224]),
+                    temporal_size=step2_cfg.get("temporal_size", 16),
+                )
+                LOGGER.info("Using asynchronous Stage-2 verification with %d workers", 
+                           step2_cfg.get("max_workers", 2))
+            else:
+                # Use synchronous ClipVerifier
+                self.step2 = ClipVerifier(
+                    model_path=step2_cfg.get("model_path", ""),
+                    threshold=step2_cfg.get("verification_threshold", 0.7),
+                )
+                LOGGER.info("Using synchronous Stage-2 verification")
         # Tracking manager (optional)
         self.tracker = TrackManager()
         # Create ring buffers per camera
@@ -181,6 +212,22 @@ class InferencePipeline:
         self.running = True
         # Set running gauge to 1
         pipeline_running_gauge.set(1)
+        
+        # Start async Stage-2 pipeline if enabled
+        if self.async_stage2:
+            self.async_stage2.start()
+            
+            # Start result handler for async processing
+            self.async_result_handler = AsyncResultHandler(
+                async_stage2=self.async_stage2,
+                events_history=self.events_history,
+                events_lock=self.events_lock,
+                poll_interval=1.0,
+            )
+            self.async_result_handler.start()
+            
+            LOGGER.info("Async Stage-2 pipeline and result handler started")
+        
         # DeepStream path: start DS pipeline and skip python camera workers
         if self.mode == "deepstream" or self.config.get("advanced", {}).get("use_deepstream", False):
             # Fail‑fast checks
@@ -240,6 +287,15 @@ class InferencePipeline:
         self.running = False
         # Set running gauge to 0
         pipeline_running_gauge.set(0)
+        
+        # Stop async Stage-2 pipeline if running
+        if self.async_result_handler:
+            self.async_result_handler.stop()
+            
+        if self.async_stage2:
+            self.async_stage2.stop()
+            LOGGER.info("Async Stage-2 pipeline stopped")
+            
         # Stop DeepStream pipeline if running
         if self._ds:
             try:
@@ -383,12 +439,35 @@ class InferencePipeline:
                 clip_frames = ring.get_clip(start_time, end_time)
             # Derive list of labels per frame from detections (naive)
             score = 0.0
-            if self.step2:
-                # For demonstration, we simply assume the same detections apply to all frames in the clip.
-                # In a real system you would run detection on each frame of the clip or reuse stored detections.
+            verification_result = None
+            
+            if self.async_stage2:
+                # Submit to async Stage-2 pipeline (non-blocking)
                 labels_per_frame = [[d.label for d in event.detections] for _ in clip_frames]
-                result = self.step2.verify(labels_per_frame)
-                score = result.get("score", 0.0)
+                request_id = self.async_stage2.submit_verification(labels_per_frame, clip_frames)
+                
+                # Try to get a result immediately (non-blocking poll)
+                verification_result = self.async_stage2.get_result(request_id, timeout=0.0)
+                
+                if verification_result:
+                    score = verification_result.get("score", 0.0)
+                    LOGGER.info("Event on %s at %.2f verified async with score %.2f", cam_id, ts, score)
+                else:
+                    # No immediate result - will be processed asynchronously
+                    # Register with result handler for background processing
+                    if self.async_result_handler:
+                        event_index = len(self.events_history)  # Will be the index after we append
+                        self.async_result_handler.register_pending_request(request_id, event_index)
+                    
+                    LOGGER.info("Event on %s at %.2f submitted for async verification (request_id: %s)", 
+                               cam_id, ts, request_id)
+                    score = -1.0  # Indicator for pending verification
+                    
+            elif self.step2:
+                # Synchronous verification (original behavior)
+                labels_per_frame = [[d.label for d in event.detections] for _ in clip_frames]
+                verification_result = self.step2.verify(labels_per_frame)
+                score = verification_result.get("score", 0.0)
                 LOGGER.info("Event on %s at %.2f verified with score %.2f", cam_id, ts, score)
             else:
                 LOGGER.info("Event on %s at %.2f: flags=%s", cam_id, ts, event.flags)
@@ -407,8 +486,9 @@ class InferencePipeline:
                 "camera_id": cam_id,
                 "timestamp": ts,
                 "flags": event.flags,
-                "score": float(score) if self.step2 else None,
+                "score": float(score) if (self.step2 or self.async_stage2) else None,
                 "clip_file": clip_filename,
+                "verification_status": "completed" if verification_result else ("pending" if self.async_stage2 else "disabled"),
             }
             with self.events_lock:
                 self.events_history.append(event_record)

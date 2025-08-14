@@ -1,3 +1,6 @@
+tight integration with DeepStream secondary inference pipelines. MoViNet models
+provide an excellent balance of accuracy and efficiency for mobile/edge deployment.
+"""
 """Secondary verification stage (clip-based) with 3D CNN support.
 
 The second stage of the ThreatDetect pipeline analyses candidate events
@@ -11,9 +14,12 @@ This module supports multiple 3D CNN backends:
 - X3D: Facebook's efficient 3D CNNs (X3D-S, X3D-M) optimized for mobile/edge deployment
 - Simple aggregation: Fallback method that counts weapon detections across frames
 
-The TAO models are recommended for production Jetson deployment due to their
-tight integration with DeepStream secondary inference pipelines. MoViNet models
-provide an excellent balance of accuracy and efficiency for mobile/edge deployment.
+Notes:
+- Model loading for TensorRT engines is stubbed for portability in this
+    repository; production deployments should implement the full TensorRT
+    engine I/O (bindings and buffer management) where indicated.
+- The `simple` verifier is intentionally lightweight and used as a safe
+    fallback when heavy dependencies (PyTorch/TensorRT) are unavailable.
 """
 
 from __future__ import annotations

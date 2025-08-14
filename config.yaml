@@ -6,7 +6,14 @@ step2:
   model_type: "tao"  # Options: "tao" (default), "x3d", "movinet", "simple"
   verification_threshold: 0.7
   input_size: [224, 224]  # Spatial dimensions (H, W)
-  temporal_size: 16  # Number of frames to sample from cliply in 'python' mode).  Adjust thresholds to tune sensitivity.
+  temporal_size: 16  # Number of frames to sample from clip
+  
+  # Async processing configuration (new feature - optional)
+  async_enabled: true  # Enable async Stage-2 processing for better performance
+  max_workers: 2  # Number of concurrent verification workers
+  queue_size: 50  # Max pending verification requests
+  result_queue_size: 100  # Max completed results to buffer
+  worker_timeout_sec: 10.0  # Timeout for individual verificationsly in 'python' mode).  Adjust thresholds to tune sensitivity.
 step1:
   model_path: "models/yolo11s.engine"    # Path to TensorRT engine or ONNX file.
   input_size: 640                        # Square input dimension for YOLO.
