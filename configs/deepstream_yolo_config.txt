@@ -4,22 +4,28 @@
 
 [property]
 gpu-id=0
-batch-size=1
-network-mode=2         ; FP16 precision (0: INT8, 1: FP32, 2: FP16)
-process-mode=1         ; 0: secondary GIE, 1: primary GIE
-interval=0             ; Run inference on every frame
-gie-unique-id=1
-network-type=0         ; 0: Detector, 1: Classifier, 2: Segmentation
-enable-dla=0
-model-engine-file=models/yolov8n.engine
-onnx-file=models/yolov8n.onnx
-labelfile-path=models/coco.names
+net-scale-factor=0.0039215697906911373
+model-engine-file=models/yolo11s.engine
+labelfile-path=configs/labels.txt
+batch-size=8
+network-mode=2
 num-detected-classes=80
-is-classifier=0
-maintain-aspect-ratio=0
-symmetric-padding=0
+interval=0
+gie-unique-id=1
+process-mode=1
+network-type=0
+cluster-mode=2
+maintain-aspect-ratio=1
+parse-bbox-func-name=NvDsInferParseYolo
+custom-lib-path=/opt/nvidia/deepstream/deepstream/lib/libnvds_infercustomparser.so
 
 [class-attrs-all]
-pre-cluster-threshold=0.5
-nms-iou-threshold=0.4
+nms-iou-threshold=0.45
+pre-cluster-threshold=0.25
 topk=300
+
+# Optional: Per-class thresholds (uncomment and adjust as needed)
+# [class-attrs-0]
+# threshold=0.7
+# [class-attrs-1] 
+# threshold=0.5

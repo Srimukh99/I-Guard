@@ -121,6 +121,12 @@ class DeepStreamPipeline:
         self.camera_ids = camera_ids or [f"cam{i}" for i in range(len(sources))]
         self.postprocess = postprocess
         self.batch_size = batch_size
+        # Fail fast if engine path is required and missing
+        if not config_file and (not model_engine or not os.path.exists(model_engine)):
+            raise FileNotFoundError(
+                f"DeepStreamPipeline: model engine not found: {model_engine}. "
+                "Build the TensorRT engine on the target Jetson and update config."
+            )
         self.pipeline: Optional[Gst.Pipeline] = None
         self.loop: Optional[GLib.MainLoop] = None
         self.thread: Optional[threading.Thread] = None
@@ -170,7 +176,9 @@ class DeepStreamPipeline:
         # Optionally add nvtracker for object tracking
         tracker = Gst.ElementFactory.make("nvtracker", "tracker")
         if tracker:
-            tracker_config = os.path.join(os.path.dirname(self.model_engine), "tracker_config.txt")
+            # Prefer external tracker config if provided via environment or config file path
+            tracker_cfg_env = os.getenv("IGUARD_TRACKER_CONFIG")
+            tracker_config = tracker_cfg_env or os.path.join(os.getcwd(), "configs", "nvtracker_iou.yml")
             if os.path.exists(tracker_config):
                 tracker.set_property("ll-config-file", tracker_config)
             pipeline.add(tracker)
@@ -428,7 +436,7 @@ if __name__ == "__main__":  # pragma: no cover
         config_file=ds_cfg,
         event_queue=ev_queue,
         camera_ids=cam_ids,
-        batch_size=cfg.get("step1", {}).get("batch_size", 1),
+        batch_size=cfg.get("step1", {}).get("frame_batch_size", 8),
     )
     # Run pipeline; stop on SIGINT
     def sig_handler(signum, frame):

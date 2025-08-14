@@ -1,0 +1,11 @@
+# NVIDIA DeepStream nvtracker IOU configuration (fast, low compute)
+# For more robust tracking, consider NvDCF on Xavier/Orin NX/AGX.
+tracker-width: 960
+tracker-height: 544
+ll-lib-file: libnvds_iou_tracker.so
+# 0: kSHORT_TERM_IOU, 1: kSHORT_TERM_DCF, 2: kHYBRID_IOU
+tracker-type: 0
+# Per-class config can be added as needed
+min-box-width: 10
+min-box-height: 10
+useUniqueID: 1

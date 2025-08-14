@@ -1,0 +1,39 @@
+# DeepStream nvinfer config for YOLO11s TensorRT engine
+# Build the engine on target Jetson: Ultralytics -> ONNX -> TensorRT engine (FP16/INT8)
+# Example: from ultralytics import YOLO; YOLO("yolo11s.pt").export(format="engine", half=True)
+
+[property]
+# Point to the TRT engine generated on this device
+model-engine-file=../models/yolo11s.engine
+# FP16
+network-mode=2
+# Max batch across streams; set to number of cameras
+batch-size=8
+# Input dimensions will be read from engine; set network-input-shape only if needed
+# network-input-shape=3;640;640
+# Custom YOLO parser from DeepStream-Yolo
+custom-lib-path=../libs/deepstream_yolo/libnvdsinfer_custom_impl_Yolo.so
+parse-bbox-func-name=NvDsInferParseYolo
+# Thresholds
+infer-dims=3;640;640
+num-detected-classes=80
+confidence-threshold=0.25
+nms-iou-threshold=0.45
+
+# Labels (optional if handled by parser)
+label-file-path=../models/coco_labels.txt
+
+# DLA offload (optional on Orin): 0=GPU, 1/2=DLA cores
+# use-dla-core=0
+
+[resource]
+# Workspace size etc.
+workspace-size=268435456
+
+[io]
+# Maintain color format
+network-color-format=0
+
+[class-attrs-all]
+pre-cluster-threshold=0.25
+*** End of File

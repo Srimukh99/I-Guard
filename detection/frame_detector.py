@@ -90,11 +90,13 @@ class FrameDetector:
         classes: List[str],
         confidence_threshold: float = 0.5,
         events_config: Optional[Dict[str, bool]] = None,
+        inference_mode: str = "python",
     ) -> None:
         self.model_path = model_path
         self.input_size = input_size
         self.classes = classes
         self.confidence_threshold = confidence_threshold
+        self.inference_mode = inference_mode
         self.events_config = events_config or {
             "pointing": True,
             "firing": True,
@@ -108,12 +110,25 @@ class FrameDetector:
     def _load_model(self) -> None:
         """Load the detection model.
 
-        For now only the Ultralytics fallback is implemented. If the
-        configured model path ends with ``.engine``, you should implement
-        loading via TensorRT. Until then, the Ultralytics YOLO API will
-        automatically download a small model if ``model_path`` is ``yolov8n.pt``
-        or similar.
+        In production DeepStream mode, we assert that the TensorRT engine exists
+        and fail fast if not. No Ultralytics fallback is used.
         """
+        # In deepstream mode, fail fast if engine doesn't exist
+        if self.inference_mode == "deepstream":
+            if not self.model_path.endswith((".engine", ".trt")):
+                raise RuntimeError(
+                    f"DeepStream mode requires TensorRT engine (.engine/.trt), got: {self.model_path}"
+                )
+            import os
+            if not os.path.exists(self.model_path):
+                raise RuntimeError(
+                    f"TensorRT engine not found: {self.model_path}. "
+                    "Build it on target Jetson with: YOLO('yolo11s.pt').export(format='engine', half=True)"
+                )
+            LOGGER.info("DeepStream mode: TensorRT engine verified at %s", self.model_path)
+            self.model = "deepstream"  # Placeholder - actual inference handled by DeepStream
+            return
+            
         # If the model path ends with `.engine` or `.trt`, attempt to load a TensorRT
         # engine.  If TensorRT is unavailable or loading fails, we fall back to
         # Ultralytics.  In a production implementation, you would create a

@@ -21,10 +21,12 @@ import logging
 import threading
 import time
 from typing import Any, Dict, List, Optional
+import os
 
 import numpy as np
 
 from ..detection import FrameDetector, ClipVerifier, TrackManager
+from .deepstream_pipeline import DeepStreamPipeline
 from .camera_adapter import CameraAdapter
 from .deepstream_adapter import DeepStreamAdapter
 from .ring_buffer import RingBuffer
@@ -94,15 +96,21 @@ class InferencePipeline:
     def __init__(self, config: Dict, event_queue: EventQueue) -> None:
         self.config = config
         self.event_queue = event_queue
-        # Initialise per-frame detector
+        # Determine mode
+        self.mode = config.get("inference_mode", "python")
+        # Initialise per-frame detector (python mode only)
         step1_cfg = config.get("step1", {})
-        self.detector = FrameDetector(
-            model_path=step1_cfg.get("model_path", "yolov8n.pt"),
-            input_size=step1_cfg.get("input_size", 640),
-            classes=step1_cfg.get("classes", ["person", "gun", "knife"]),
-            confidence_threshold=step1_cfg.get("confidence_threshold", 0.5),
-            events_config=step1_cfg.get("events", {}),
-        )
+        self.detector: Optional[FrameDetector]
+        if self.mode == "python":
+            self.detector = FrameDetector(
+                model_path=step1_cfg.get("model_path", "yolov8n.pt"),
+                input_size=step1_cfg.get("input_size", 640),
+                classes=step1_cfg.get("classes", ["person", "gun", "knife"]),
+                confidence_threshold=step1_cfg.get("confidence_threshold", 0.5),
+                events_config=step1_cfg.get("events", {}),
+            )
+        else:
+            self.detector = None
         # Initialise clip verifier if enabled
         step2_cfg = config.get("step2", {})
         self.step2: Optional[ClipVerifier] = None
@@ -165,38 +173,63 @@ class InferencePipeline:
         # based on age or maximum length.
         self.events_history: List[Dict[str, Any]] = []
         self.events_lock = threading.Lock()
+        # DeepStream pipeline handle (when in deepstream mode)
+        self._ds: Optional[DeepStreamPipeline] = None
 
     def start(self) -> None:
         """Start all camera and event processing threads."""
         self.running = True
         # Set running gauge to 1
         pipeline_running_gauge.set(1)
-        # Start camera workers
-        use_ds = self.config.get("advanced", {}).get("use_deepstream", False)
-        for cam_cfg in self.cameras:
-            cam_id = cam_cfg.get("id") or f"cam_{len(self.adapters)}"
-            source = cam_cfg.get("source", 0)
-            fps = cam_cfg.get("fps")
-            # Choose adapter based on configuration.  When DeepStream is
-            # enabled, ``source`` should be a full GStreamer pipeline.
-            if use_ds:
-                adapter = DeepStreamAdapter(source=str(source), fps=fps)
-            else:
+        # DeepStream path: start DS pipeline and skip python camera workers
+        if self.mode == "deepstream" or self.config.get("advanced", {}).get("use_deepstream", False):
+            # Fail‑fast checks
+            pgie_cfg_path = self.config.get("pgie_config")
+            if not pgie_cfg_path or not isinstance(pgie_cfg_path, str) or not os.path.isfile(pgie_cfg_path):
+                raise FileNotFoundError(
+                    f"DeepStream mode enabled but pgie_config not found: {pgie_cfg_path}"
+                )
+            # Optional: also ensure step1.model_path exists for clarity
+            engine_path = self.config.get("step1", {}).get("model_path")
+            if not engine_path or not os.path.isfile(engine_path):
+                raise FileNotFoundError(
+                    f"DeepStream mode requires a TensorRT engine at step1.model_path; missing: {engine_path}"
+                )
+            sources: List[str] = [str(c.get("source", "")) for c in self.cameras]
+            camera_ids: List[str] = [c.get("id") or f"cam{i}" for i, c in enumerate(self.cameras)]
+            batch_size = max(1, len(sources))
+            self._ds = DeepStreamPipeline(
+                sources=sources,
+                model_engine=engine_path,
+                config_file=pgie_cfg_path,
+                event_queue=self.event_queue,
+                camera_ids=camera_ids,
+                batch_size=batch_size,
+            )
+            self._ds.start()
+        else:
+            # Start camera workers (python mode)
+            for cam_cfg in self.cameras:
+                cam_id = cam_cfg.get("id") or f"cam_{len(self.adapters)}"
+                source = cam_cfg.get("source", 0)
+                fps = cam_cfg.get("fps")
+                # Choose adapter based on configuration.  When DeepStream is
+                # enabled, ``source`` should be a full GStreamer pipeline.
                 adapter = CameraAdapter(source=source, fps=fps)
-            self.adapters[cam_id] = adapter
-            # Determine ring buffer length in frames
-            buffer_capacity = int((self.pre_sec + self.post_sec) * (fps or 15)) + 1
-            self.ring_buffers[cam_id] = RingBuffer(capacity=buffer_capacity)
-            # Initialise dynamic skip for this camera.  We clamp to the allowed
-            # range to avoid invalid values.
-            initial_skip = self.frame_skip
-            if self.dynamic_backpressure:
-                initial_skip = max(self.min_frame_skip, min(initial_skip, self.max_frame_skip))
-            self._dynamic_skip[cam_id] = initial_skip
-            thread = threading.Thread(target=self._camera_loop, args=(cam_id,), daemon=True)
-            thread.start()
-            self.workers.append(thread)
-        # Start event consumer thread
+                self.adapters[cam_id] = adapter
+                # Determine ring buffer length in frames
+                buffer_capacity = int((self.pre_sec + self.post_sec) * (fps or 15)) + 1
+                self.ring_buffers[cam_id] = RingBuffer(capacity=buffer_capacity)
+                # Initialise dynamic skip for this camera.  We clamp to the allowed
+                # range to avoid invalid values.
+                initial_skip = self.frame_skip
+                if self.dynamic_backpressure:
+                    initial_skip = max(self.min_frame_skip, min(initial_skip, self.max_frame_skip))
+                self._dynamic_skip[cam_id] = initial_skip
+                thread = threading.Thread(target=self._camera_loop, args=(cam_id,), daemon=True)
+                thread.start()
+                self.workers.append(thread)
+        # Start event consumer thread (common)
         consumer_thread = threading.Thread(target=self._event_consumer, daemon=True)
         consumer_thread.start()
         self.workers.append(consumer_thread)
@@ -207,6 +240,12 @@ class InferencePipeline:
         self.running = False
         # Set running gauge to 0
         pipeline_running_gauge.set(0)
+        # Stop DeepStream pipeline if running
+        if self._ds:
+            try:
+                self._ds.stop()
+            except Exception:
+                pass
         for adapter in self.adapters.values():
             adapter.release()
         for thread in self.workers:
@@ -334,13 +373,14 @@ class InferencePipeline:
             ts = event.timestamp
             ring = self.ring_buffers.get(cam_id)
             if ring is None:
-                LOGGER.error("No ring buffer found for camera %s", cam_id)
-                event_queue_size_gauge.set(self.event_queue.qsize())
-                continue
-            # Extract pre/post clip frames
-            start_time = ts - self.pre_sec
-            end_time = ts + self.post_sec
-            clip_frames = ring.get_clip(start_time, end_time)
+                # DeepStream path may not maintain a CPU ring buffer; proceed without clip frames
+                LOGGER.debug("No ring buffer for %s; proceeding without clip save", cam_id)
+                clip_frames: List[np.ndarray] = []
+            else:
+                # Extract pre/post clip frames
+                start_time = ts - self.pre_sec
+                end_time = ts + self.post_sec
+                clip_frames = ring.get_clip(start_time, end_time)
             # Derive list of labels per frame from detections (naive)
             score = 0.0
             if self.step2:
