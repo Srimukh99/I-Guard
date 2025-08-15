@@ -122,8 +122,8 @@ class MockFrameDetector:
             
         return detections
     
-    def analyze_events(self, detections: List) -> Dict[str, bool]:
-        """Generate event flags based on detections."""
+    def analyze_events(self, detections: List, frame: np.ndarray = None) -> Dict[str, bool]:
+        """Generate event flags based on detections and optional frame data."""
         flags = {
             "pointing": False,
             "firing": False,
@@ -150,38 +150,125 @@ class MockFrameDetector:
             elif label in ["gun", "knife"]:
                 weapon_detected = True
         
-        if person_detected and weapon_detected:
+        # Use frame data if provided for additional analysis
+        if frame is not None and person_detected and weapon_detected:
+            # Check for red pixels (our synthetic threat indicator)
+            if np.any(frame[:, :, 2] > 200):  # Red channel high
+                flags["pointing"] = True
+        elif person_detected and weapon_detected:
+            # Fallback to basic detection logic
             flags["pointing"] = True
             
         return flags
-
-
 class MockClipVerifier:
-    """Mock clip verifier that returns controllable verification results."""
+    """Mock CLIP verifier for testing."""
     
     def __init__(self, *args, **kwargs):
         self.verification_count = 0
         
-    def verify(self, video_clip=None, detections_per_frame=None) -> Dict[str, float]:
-        """Mock verification that returns threat score based on weapon detections."""
+    def verify_clip(self, frames: List[np.ndarray], metadata: Dict) -> Dict:
+        """Mock clip verification that simulates threat verification."""
         self.verification_count += 1
         
-        if detections_per_frame:
-            # Count frames with weapons
-            weapon_frames = sum(1 for frame_labels in detections_per_frame 
-                              if any(label in ["gun", "knife"] for label in frame_labels))
-            total_frames = len(detections_per_frame)
-            score = weapon_frames / max(total_frames, 1)
-        else:
-            # Default score for mock
-            score = 0.8
-            
+        # Simple mock logic: verify as threat if any frame has red pixels
+        threat_detected = False
+        for frame in frames:
+            if np.any(frame[:, :, 2] > 200):  # Red channel high
+                threat_detected = True
+                break
+                
         return {
-            "score": score,
-            "action": "weapon_threat" if score > 0.5 else "normal",
-            "action_confidence": score,
-            "weapon_ratio": score
+            "verified": threat_detected,
+            "confidence": 0.9 if threat_detected else 0.1,
+            "threat_type": "weapon_pointing" if threat_detected else "false_positive"
         }
+        
+    def verify(self, detections_per_frame: List[List[str]]) -> Dict:
+        """Mock verify method for component testing."""
+        self.verification_count += 1
+        
+        # Simple mock logic: verify as threat if both person and gun are detected
+        threat_detected = False
+        for frame_detections in detections_per_frame:
+            if "person" in frame_detections and "gun" in frame_detections:
+                threat_detected = True
+                break
+                
+        return {
+            "verified": threat_detected,
+            "confidence": 0.9 if threat_detected else 0.1,
+            "score": 0.9 if threat_detected else 0.1,
+            "action": "weapon_pointing" if threat_detected else "false_positive",
+            "threat_type": "weapon_pointing" if threat_detected else "false_positive"
+        }
+
+
+class MockBackend:
+    """Mock backend that simulates backend processing."""
+    
+    def __init__(self, config, *args, **kwargs):
+        self.config = config
+        self.is_initialized = True
+        self.frame_detector = MockFrameDetector()
+        # Create mock capabilities
+        from pipeline.backends.base_backend import BackendCapabilities
+        self._capabilities = BackendCapabilities(
+            max_streams=4,
+            gpu_required=False,
+            platform_requirements=[],
+            performance_tier='medium',
+            memory_usage='low',
+            cpu_intensive=False
+        )
+        
+    @property
+    def capabilities(self):
+        return self._capabilities
+        
+    def initialize(self) -> bool:
+        self.is_initialized = True
+        return True
+        
+    def cleanup(self):
+        pass
+        
+    def validate_frame(self, frame: np.ndarray) -> bool:
+        return frame is not None and frame.size > 0
+        
+    def process_frame(self, frame: np.ndarray, frame_id: int, timestamp: float) -> List:
+        """Process frame and return detections in backend format."""
+        if not self.is_initialized:
+            raise RuntimeError("Backend not initialized")
+            
+        # Use the mock detector to get detections
+        detections = self.frame_detector.detect(frame)
+        
+        # Convert to backend format (list of dicts)
+        backend_detections = []
+        for det in detections:
+            backend_detections.append({
+                'class_id': hash(det.label) % 1000,
+                'confidence': det.confidence,
+                'bbox': det.bbox,
+                'class_name': det.label,
+                'label': det.label  # Keep both for compatibility
+            })
+            
+        return backend_detections
+
+
+class MockBackendFactory:
+    """Mock backend factory that always returns our mock backend."""
+    
+    def __init__(self):
+        pass
+        
+    def create_backend_with_fallback(self, config):
+        """Return mock backend and name."""
+        return MockBackend(config), "mock_python"
+        
+    def get_available_backends(self):
+        return ["mock_python"]
 
 
 @pytest.fixture
@@ -264,8 +351,10 @@ class TestEndToEndPipeline:
     @patch('pipeline.inference_pipeline.CameraAdapter', MockCameraAdapter)
     @patch('pipeline.inference_pipeline.FrameDetector', MockFrameDetector)
     @patch('pipeline.inference_pipeline.ClipVerifier', MockClipVerifier)
+    @patch('pipeline.inference_pipeline.BackendFactory', MockBackendFactory)
     @patch('pipeline.backends.python_backend.FrameDetector', MockFrameDetector)
     @patch('pipeline.backends.python_backend.ClipVerifier', MockClipVerifier)
+    @patch('pipeline.backends.python_backend.PythonBackend', MockBackend)
     def test_complete_pipeline_flow(self, mock_config):
         """Test the complete pipeline flow from camera to verification."""
         if not HAS_INFERENCE_PIPELINE:
@@ -355,8 +444,10 @@ class TestEndToEndPipeline:
 
     @patch('pipeline.inference_pipeline.CameraAdapter', MockCameraAdapter)
     @patch('pipeline.inference_pipeline.FrameDetector', MockFrameDetector)
+    @patch('pipeline.inference_pipeline.BackendFactory', MockBackendFactory)
     @patch('pipeline.backends.python_backend.FrameDetector', MockFrameDetector)
     @patch('pipeline.backends.python_backend.ClipVerifier', MockClipVerifier)
+    @patch('pipeline.backends.python_backend.PythonBackend', MockBackend)
     def test_pipeline_without_verification(self, mock_config):
         """Test pipeline operation with verification disabled."""
         if not HAS_INFERENCE_PIPELINE:
