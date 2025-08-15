@@ -20,7 +20,9 @@ pytorchvideo>=0.1.5
 # pycuda>=2021.1
 
 # MoViNet dependencies (Google's Mobile Video Networks)
-tf-models-official>=2.8.0
+# This dependency creates conflicts with modern scipy versions and prevents installation.
+# Commenting out to proceed, as it's an optional component.
+# tf-models-official>=2.8.0
 
 # DeepStream Python bindings (Jetson only) 
 # Install via: sudo apt install python3-gi python3-gst-1.0

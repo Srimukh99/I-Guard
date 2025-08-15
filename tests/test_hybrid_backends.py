@@ -285,6 +285,51 @@ class TestBackendFactory(unittest.TestCase):
         with patch.object(self.factory, '_available_backends', {'python': PythonBackend}):
             backend_name = self.factory._select_best_backend(config)
             self.assertEqual(backend_name, 'python')  # Only available option
+
+    def test_selection_logic_from_config(self):
+        """Test the backend selection logic with various configs."""
+
+        # --- Test Cases when DeepStream IS available ---
+        # Mock that the factory has discovered the deepstream backend
+        self.factory._available_backends['deepstream'] = MagicMock()
+
+        test_cases_ds_available = [
+            # High Priority -> DeepStream
+            {'priority': 'high', 'streams': 2, 'expected': 'deepstream', 'msg': "High priority should select DeepStream"},
+            # Compatibility Priority -> Python
+            {'priority': 'compatibility', 'streams': 10, 'expected': 'python', 'msg': "Compatibility priority should select Python"},
+            # Balanced, High stream count -> DeepStream
+            {'priority': 'balanced', 'streams': 10, 'expected': 'deepstream', 'msg': "Balanced with high stream count should select DeepStream"},
+            # Balanced, Low stream count -> Python
+            {'priority': 'balanced', 'streams': 2, 'expected': 'python', 'msg': "Balanced with low stream count should select Python"},
+        ]
+
+        for case in test_cases_ds_available:
+            with self.subTest(msg=case['msg']):
+                config = {
+                    'backend': {
+                        'type': 'auto',
+                        'auto_selection': {
+                            'performance_priority': case['priority'],
+                            'stream_threshold': 8
+                        }
+                    },
+                    'cameras': [{} for _ in range(case['streams'])]
+                }
+                selected_backend = self.factory._select_best_backend(config)
+                self.assertEqual(selected_backend, case['expected'])
+
+        # --- Test Cases when DeepStream is NOT available ---
+        self.factory._available_backends.pop('deepstream')
+        config = {
+            'backend': {
+                'type': 'auto',
+                'auto_selection': {'performance_priority': 'high'}
+            },
+            'cameras': []
+        }
+        selected_backend = self.factory._select_best_backend(config)
+        self.assertEqual(selected_backend, 'python', "Should fall back to Python if DeepStream is not available")
     
     def test_backend_validation(self):
         """Test backend configuration validation."""

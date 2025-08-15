@@ -124,36 +124,61 @@ class BackendFactory:
     
     def _select_best_backend(self, config: Dict[str, Any]) -> str:
         """
-        Automatically select the best backend based on requirements.
+        Automatically select the best backend based on documented logic.
         
         Args:
             config: Configuration dictionary
             
         Returns:
-            Backend name
+            Name of the selected backend ('python' or 'deepstream').
         """
-        # Check requirements
-        stream_count = config.get('streams', {}).get('max_concurrent', 4)
-        performance_priority = config.get('performance', {}).get('priority', 'balanced')
+        backend_config = config.get('backend', {})
+        auto_selection_config = backend_config.get('auto_selection', {})
         
-        # Decision logic
-        if stream_count > 8 and 'deepstream' in self._available_backends:
-            # High stream count - prefer DeepStream if available
-            return 'deepstream'
+        # Get selection criteria from the correct config section
+        stream_count = len(config.get('cameras', []))
+        stream_threshold = auto_selection_config.get('stream_threshold', 8)
+        performance_priority = auto_selection_config.get('performance_priority', 'balanced')
         
-        if performance_priority == 'high' and 'deepstream' in self._available_backends:
-            # High performance priority - prefer DeepStream
-            return 'deepstream'
+        self.logger.debug(
+            f"Backend selection criteria: available={list(self._available_backends.keys())}, "
+            f"priority='{performance_priority}', stream_count={stream_count} (threshold: {stream_threshold})"
+        )
         
+        # Always use Python backend if DeepStream is not available
+        if 'deepstream' not in self._available_backends:
+            self.logger.info("Selecting 'python' backend (DeepStream not available).")
+            return 'python'
+
+        # --- Decision Logic (when DeepStream is available) ---
+        
+        # 1. Handle 'compatibility' priority: always use Python
         if performance_priority == 'compatibility':
-            # Compatibility priority - prefer Python
+            self.logger.info("Selecting 'python' backend due to 'compatibility' priority.")
             return 'python'
-        
-        # Default selection based on availability
-        if 'deepstream' in self._available_backends:
+
+        # 2. Handle 'high' performance priority: always use DeepStream
+        if performance_priority == 'high':
+            self.logger.info("Selecting 'deepstream' backend due to 'high' performance priority.")
             return 'deepstream'
-        else:
-            return 'python'
+
+        # 3. Handle 'balanced' priority (default)
+        if performance_priority == 'balanced':
+            if stream_count > stream_threshold:
+                self.logger.info(
+                    f"Selecting 'deepstream' backend: stream count {stream_count} exceeds threshold {stream_threshold}."
+                )
+                return 'deepstream'
+            else:
+                self.logger.info(
+                    f"Selecting 'python' backend: stream count {stream_count} is within threshold "
+                    f"and priority is 'balanced'."
+                )
+                return 'python'
+
+        # Fallback for any unknown priority string
+        self.logger.warning(f"Unknown performance_priority '{performance_priority}', defaulting to 'python'.")
+        return 'python'
     
     def _get_fallback_backend(self, requested_backend: str) -> Optional[str]:
         """

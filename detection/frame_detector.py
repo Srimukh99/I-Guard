@@ -73,33 +73,31 @@ class FrameDetector:
 
     Parameters
     ----------
-    model_path : str
-        Path to a YOLO checkpoint (e.g. ``.pt`` file) or TensorRT engine.
-    input_size : int
-        Size of the square input expected by the model (e.g. 640).
-    classes : List[str]
-        List of class names to detect. Classes not listed here will be
-        filtered out.
-    confidence_threshold : float
-        Minimum confidence to accept a detection. Detections below this
-        threshold are discarded.
-    events_config : Dict[str, bool]
-        Dict of flags controlling which heuristics to run. Keys include
-        ``pointing``, ``firing``, ``fall``, ``assault`` and ``mass_shooter``.
+    model_path : str, optional
+        Path to a YOLO checkpoint or TensorRT engine. Can be None if the
+        class is used for event analysis only.
+    input_size : int, optional
+        Size of the square input expected by the model.
+    classes : List[str], optional
+        List of class names to detect.
+    confidence_threshold : float, optional
+        Minimum confidence to accept a detection.
+    events_config : Dict[str, bool], optional
+        Dict of flags controlling which heuristics to run.
     """
 
     def __init__(
         self,
-        model_path: str,
-        input_size: int,
-        classes: List[str],
+        model_path: Optional[str] = None,
+        input_size: Optional[int] = 640,
+        classes: Optional[List[str]] = None,
         confidence_threshold: float = 0.5,
         events_config: Optional[Dict[str, bool]] = None,
         inference_mode: str = "python",
     ) -> None:
         self.model_path = model_path
         self.input_size = input_size
-        self.classes = classes
+        self.classes = classes or []
         self.confidence_threshold = confidence_threshold
         self.inference_mode = inference_mode
         self.events_config = events_config or {
@@ -110,7 +108,10 @@ class FrameDetector:
             "mass_shooter": True,
         }
         self.model = None
-        self._load_model()
+        if self.model_path:
+            self._load_model()
+        else:
+            LOGGER.info("Frame detector initialised without a model (for event analysis only).")
 
     def _load_model(self) -> None:
         """Load the detection model.
