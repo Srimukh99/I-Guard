@@ -122,7 +122,7 @@ class MockFrameDetector:
             
         return detections
     
-    def analyze_events(self, detections: List[Detection]) -> Dict[str, bool]:
+    def analyze_events(self, detections: List) -> Dict[str, bool]:
         """Generate event flags based on detections."""
         flags = {
             "pointing": False,
@@ -133,8 +133,22 @@ class MockFrameDetector:
         }
         
         # Flag pointing if we have both person and weapon
-        person_detected = any(d.label == "person" for d in detections)
-        weapon_detected = any(d.label in ["gun", "knife"] for d in detections)
+        # Handle both Detection objects and dictionary formats
+        person_detected = False
+        weapon_detected = False
+        
+        for d in detections:
+            if hasattr(d, 'label'):  # Detection object
+                label = d.label
+            elif isinstance(d, dict):  # Dictionary format
+                label = d.get('label') or d.get('class_name', '')
+            else:
+                continue
+                
+            if label == "person":
+                person_detected = True
+            elif label in ["gun", "knife"]:
+                weapon_detected = True
         
         if person_detected and weapon_detected:
             flags["pointing"] = True
@@ -175,7 +189,6 @@ def temp_config_dir():
     """Create temporary directory for test configuration files."""
     if not HAS_PYTEST:
         # Fallback for non-pytest usage
-        import tempfile
         return tempfile.mkdtemp()
     
     temp_dir = tempfile.mkdtemp()
@@ -188,7 +201,6 @@ def mock_config(temp_config_dir):
     """Create mock configuration for testing."""
     if not HAS_PYTEST:
         # Fallback for non-pytest usage
-        import tempfile
         temp_dir = tempfile.mkdtemp()
     else:
         temp_dir = temp_config_dir
@@ -252,6 +264,8 @@ class TestEndToEndPipeline:
     @patch('pipeline.inference_pipeline.CameraAdapter', MockCameraAdapter)
     @patch('pipeline.inference_pipeline.FrameDetector', MockFrameDetector)
     @patch('pipeline.inference_pipeline.ClipVerifier', MockClipVerifier)
+    @patch('pipeline.backends.python_backend.FrameDetector', MockFrameDetector)
+    @patch('pipeline.backends.python_backend.ClipVerifier', MockClipVerifier)
     def test_complete_pipeline_flow(self, mock_config):
         """Test the complete pipeline flow from camera to verification."""
         if not HAS_INFERENCE_PIPELINE:
@@ -323,7 +337,13 @@ class TestEndToEndPipeline:
         assert len(threat_event.detections) >= 2  # person + weapon
         
         # Check detection labels
-        detection_labels = [d.label for d in threat_event.detections]
+        detection_labels = []
+        for d in threat_event.detections:
+            if hasattr(d, 'label'):  # Detection object
+                detection_labels.append(d.label)
+            elif isinstance(d, dict):  # Dictionary format
+                detection_labels.append(d.get('label') or d.get('class_name', ''))
+        
         assert "person" in detection_labels
         assert "gun" in detection_labels
         
@@ -335,6 +355,8 @@ class TestEndToEndPipeline:
 
     @patch('pipeline.inference_pipeline.CameraAdapter', MockCameraAdapter)
     @patch('pipeline.inference_pipeline.FrameDetector', MockFrameDetector)
+    @patch('pipeline.backends.python_backend.FrameDetector', MockFrameDetector)
+    @patch('pipeline.backends.python_backend.ClipVerifier', MockClipVerifier)
     def test_pipeline_without_verification(self, mock_config):
         """Test pipeline operation with verification disabled."""
         if not HAS_INFERENCE_PIPELINE:
@@ -442,6 +464,8 @@ class TestEndToEndPipeline:
     @patch('pipeline.inference_pipeline.CameraAdapter', MockCameraAdapter)
     @patch('pipeline.inference_pipeline.FrameDetector', MockFrameDetector)
     @patch('pipeline.inference_pipeline.ClipVerifier', MockClipVerifier)
+    @patch('pipeline.backends.python_backend.FrameDetector', MockFrameDetector)
+    @patch('pipeline.backends.python_backend.ClipVerifier', MockClipVerifier)
     def test_pipeline_metrics_and_history(self, mock_config):
         """Test that pipeline correctly maintains event history and metrics."""
         if not HAS_INFERENCE_PIPELINE:

@@ -38,6 +38,7 @@ from .ring_buffer import RingBuffer
 from .event_queue import Event, EventQueue
 from .async_stage2 import AsyncStage2Pipeline
 from .async_result_handler import AsyncResultHandler
+from .backends import BackendFactory, BaseBackend
 
 # Metrics instrumentation using the Prometheus client.  These metrics
 # provide insight into the health and performance of the pipeline when
@@ -103,9 +104,16 @@ class InferencePipeline:
     def __init__(self, config: Dict, event_queue: EventQueue) -> None:
         self.config = config
         self.event_queue = event_queue
-        # Determine mode
+        
+        # Initialize hybrid backend system
+        self.backend_factory = BackendFactory()
+        self.backend: Optional[BaseBackend] = None
+        self.backend_name: Optional[str] = None
+        
+        # Legacy mode support for backward compatibility
         self.mode = config.get("inference_mode", "python")
-        # Initialise per-frame detector (python mode only)
+        
+        # Legacy detector (kept for backward compatibility)
         step1_cfg = config.get("step1", {})
         self.detector: Optional[FrameDetector]
         if self.mode == "python":
@@ -213,6 +221,21 @@ class InferencePipeline:
         # Set running gauge to 1
         pipeline_running_gauge.set(1)
         
+        # Initialize hybrid backend
+        try:
+            self.backend, self.backend_name = self.backend_factory.create_backend_with_fallback(self.config)
+            LOGGER.info(f"Using {self.backend_name} backend for processing")
+            
+            # Log backend capabilities
+            capabilities = self.backend.capabilities
+            LOGGER.info(f"Backend capabilities: max_streams={capabilities.max_streams}, "
+                       f"performance_tier={capabilities.performance_tier}, "
+                       f"gpu_required={capabilities.gpu_required}")
+                       
+        except Exception as e:
+            LOGGER.error(f"Failed to initialize backend: {e}")
+            raise RuntimeError(f"No suitable backend could be initialized: {e}")
+        
         # Start async Stage-2 pipeline if enabled
         if self.async_stage2:
             self.async_stage2.start()
@@ -228,15 +251,22 @@ class InferencePipeline:
             
             LOGGER.info("Async Stage-2 pipeline and result handler started")
         
-        # DeepStream path: start DS pipeline and skip python camera workers
-        if self.mode == "deepstream" or self.config.get("advanced", {}).get("use_deepstream", False):
-            # Fail‑fast checks
+        # Check if using legacy DeepStream mode or new backend system
+        if self.backend_name == 'deepstream' and hasattr(self.backend, 'start_streaming'):
+            # Use new DeepStream backend with streaming
+            sources: List[str] = [str(c.get("source", "")) for c in self.cameras]
+            if self.backend.start_streaming(sources):
+                LOGGER.info("DeepStream backend streaming started")
+            else:
+                LOGGER.error("Failed to start DeepStream streaming")
+                raise RuntimeError("DeepStream backend streaming failed")
+        elif self.mode == "deepstream" or self.config.get("advanced", {}).get("use_deepstream", False):
+            # Legacy DeepStream path for backward compatibility
             pgie_cfg_path = self.config.get("pgie_config")
             if not pgie_cfg_path or not isinstance(pgie_cfg_path, str) or not os.path.isfile(pgie_cfg_path):
                 raise FileNotFoundError(
                     f"DeepStream mode enabled but pgie_config not found: {pgie_cfg_path}"
                 )
-            # Optional: also ensure step1.model_path exists for clarity
             engine_path = self.config.get("step1", {}).get("model_path")
             if not engine_path or not os.path.isfile(engine_path):
                 raise FileNotFoundError(
@@ -255,32 +285,35 @@ class InferencePipeline:
             )
             self._ds.start()
         else:
-            # Start camera workers (python mode)
+            # Start camera workers (for frame-by-frame processing backends)
             for cam_cfg in self.cameras:
                 cam_id = cam_cfg.get("id") or f"cam_{len(self.adapters)}"
                 source = cam_cfg.get("source", 0)
                 fps = cam_cfg.get("fps")
-                # Choose adapter based on configuration.  When DeepStream is
-                # enabled, ``source`` should be a full GStreamer pipeline.
                 adapter = CameraAdapter(source=source, fps=fps)
                 self.adapters[cam_id] = adapter
+                
                 # Determine ring buffer length in frames
                 buffer_capacity = int((self.pre_sec + self.post_sec) * (fps or 15)) + 1
                 self.ring_buffers[cam_id] = RingBuffer(capacity=buffer_capacity)
-                # Initialise dynamic skip for this camera.  We clamp to the allowed
-                # range to avoid invalid values.
+                
+                # Initialize dynamic skip for this camera
                 initial_skip = self.frame_skip
                 if self.dynamic_backpressure:
                     initial_skip = max(self.min_frame_skip, min(initial_skip, self.max_frame_skip))
                 self._dynamic_skip[cam_id] = initial_skip
+                
                 thread = threading.Thread(target=self._camera_loop, args=(cam_id,), daemon=True)
                 thread.start()
                 self.workers.append(thread)
-        # Start event consumer thread (common)
+        
+        # Start event consumer thread (common to all backends)
         consumer_thread = threading.Thread(target=self._event_consumer, daemon=True)
         consumer_thread.start()
         self.workers.append(consumer_thread)
-        LOGGER.info("Inference pipeline started with %d cameras", len(self.cameras))
+        
+        LOGGER.info("Inference pipeline started with %d cameras using %s backend", 
+                   len(self.cameras), self.backend_name)
 
     def stop(self) -> None:
         """Stop all worker threads and release resources."""
@@ -295,13 +328,24 @@ class InferencePipeline:
         if self.async_stage2:
             self.async_stage2.stop()
             LOGGER.info("Async Stage-2 pipeline stopped")
+        
+        # Clean up backend
+        if self.backend:
+            try:
+                if hasattr(self.backend, 'stop_streaming'):
+                    self.backend.stop_streaming()
+                self.backend.cleanup()
+                LOGGER.info(f"{self.backend_name} backend cleaned up")
+            except Exception as e:
+                LOGGER.error(f"Error cleaning up backend: {e}")
             
-        # Stop DeepStream pipeline if running
+        # Stop legacy DeepStream pipeline if running
         if self._ds:
             try:
                 self._ds.stop()
             except Exception:
                 pass
+                
         for adapter in self.adapters.values():
             adapter.release()
         for thread in self.workers:
@@ -377,9 +421,30 @@ class InferencePipeline:
             # Clear batch buffers
             batch_frames.clear()
             batch_timestamps.clear()
-            # Run Step1 detection with latency measurement
+            # Run detection using hybrid backend system
             start_time_det = time.perf_counter()
-            detections = self.detector.detect(detect_frame)
+            
+            # Use backend if available, fallback to legacy detector
+            if self.backend:
+                try:
+                    backend_detections = self.backend.process_frame(detect_frame, frame_counter, detect_ts)
+                    # Convert backend detections to legacy format for compatibility
+                    detections = []
+                    for det in backend_detections:
+                        detections.append({
+                            'class_id': det.class_id,
+                            'confidence': det.confidence,
+                            'bbox': det.bbox,
+                            'class_name': det.class_name,
+                            'label': det.class_name  # For backward compatibility
+                        })
+                except Exception as e:
+                    LOGGER.error(f"Backend processing failed on {cam_id}: {e}")
+                    detections = []
+            else:
+                # Fallback to legacy detector
+                detections = self.detector.detect(detect_frame)
+            
             latency = time.perf_counter() - start_time_det
             detection_latency_histogram.observe(latency)
             # Optionally update tracker to assign persistent IDs
@@ -443,7 +508,15 @@ class InferencePipeline:
             
             if self.async_stage2:
                 # Submit to async Stage-2 pipeline (non-blocking)
-                labels_per_frame = [[d.label for d in event.detections] for _ in clip_frames]
+                # Extract labels from detections (handle both dict and object formats)
+                labels = []
+                for d in event.detections:
+                    if hasattr(d, 'label'):  # Detection object
+                        labels.append(d.label)
+                    elif isinstance(d, dict):  # Dictionary format
+                        labels.append(d.get('label') or d.get('class_name', ''))
+                
+                labels_per_frame = [labels for _ in clip_frames]
                 request_id = self.async_stage2.submit_verification(labels_per_frame, clip_frames)
                 
                 # Try to get a result immediately (non-blocking poll)
@@ -465,7 +538,15 @@ class InferencePipeline:
                     
             elif self.step2:
                 # Synchronous verification (original behavior)
-                labels_per_frame = [[d.label for d in event.detections] for _ in clip_frames]
+                # Extract labels from detections (handle both dict and object formats)
+                labels = []
+                for d in event.detections:
+                    if hasattr(d, 'label'):  # Detection object
+                        labels.append(d.label)
+                    elif isinstance(d, dict):  # Dictionary format
+                        labels.append(d.get('label') or d.get('class_name', ''))
+                
+                labels_per_frame = [labels for _ in clip_frames]
                 verification_result = self.step2.verify(labels_per_frame)
                 score = verification_result.get("score", 0.0)
                 LOGGER.info("Event on %s at %.2f verified with score %.2f", cam_id, ts, score)

@@ -1,0 +1,137 @@
+---
+# I-Guard Hybrid Backend Configuration
+# Supports automatic backend selection with intelligent fallback
+
+# Hybrid Backend Configuration
+backend:
+  # Backend selection: 'auto', 'python', 'deepstream'
+  # - auto: Automatically select best backend based on system capabilities
+  # - python: Force Python backend (YOLO + CLIP, cross-platform)
+  # - deepstream: Force DeepStream backend (high performance, NVIDIA only)
+  type: auto
+  
+  # Performance priority for automatic selection
+  # - high: Prefer DeepStream for maximum throughput
+  # - balanced: Balance performance and compatibility  
+  # - compatibility: Prefer Python for maximum compatibility
+  performance_priority: balanced
+
+# Stream Management
+streams:
+  # Maximum concurrent camera streams
+  max_concurrent: 8
+  
+# Performance Tuning
+performance:
+  # Overall priority: high, balanced, compatibility
+  priority: balanced
+  
+  # GPU utilization preference
+  prefer_gpu: true
+  
+  # Batch processing settings
+  batch_size: 4
+  batch_timeout_ms: 100
+
+# Model Configuration (shared across backends)
+model:
+  # Path to model file (YOLO weights for Python, TensorRT engine for DeepStream)
+  path: "models/yolov8n.pt"
+  
+  # Model input size
+  input_size: 640
+  
+  # Detection thresholds
+  confidence_threshold: 0.5
+  iou_threshold: 0.4
+  
+  # Target classes
+  classes: ["person", "gun", "knife"]
+
+# CLIP Verification (Python backend only)
+clip_verification:
+  enabled: true
+  model_name: "ViT-B/32"
+  threshold: 0.8
+
+# Legacy Configuration (for backward compatibility)
+inference_mode: python  # Will be overridden by backend.type if set
+
+# DeepStream Configuration (when using DeepStream backend)
+deepstream:
+  # DeepStream primary inference (PGIE) configuration
+  pgie_config: "configs/deepstream_yolo_config.txt"
+  
+  # Tracker configuration  
+  tracker_config: "configs/nvtracker_iou.yml"
+  
+  # TensorRT engine path (for DeepStream)
+  engine_path: "models/yolov8n.engine"
+
+# Step 1 Detection (legacy - mapped to model config)
+step1:
+  model_path: "models/yolov8n.pt"
+  input_size: 640
+  confidence_threshold: 0.5
+  classes: ["person", "gun", "knife"]
+  events:
+    pointing: true
+    firing: true
+    fall: true
+    assault: true
+    mass_shooter: true
+  pre_buffer_sec: 10
+  post_buffer_sec: 10
+  frame_skip: 0
+  frame_batch_size: 8
+
+# Step 2 Verification settings
+step2:
+  enabled: true
+  model_path: "models/tao_action_recognition.engine"
+  model_type: "tao"
+  verification_threshold: 0.7
+  input_size: [224, 224]
+  temporal_size: 16
+  
+  # Async processing configuration
+  async_enabled: true
+  max_workers: 2
+  queue_size: 50
+  result_queue_size: 100
+  worker_timeout_sec: 10.0
+
+# Camera Configuration
+cameras:
+  - id: cam01
+    name: "Front entrance"
+    source: 0
+    fps: 15
+    resolution: [1280, 720]
+  - id: cam02
+    name: "Back exit"
+    source: "rtsp://username:password@192.168.0.100/stream"
+    fps: 15
+    resolution: [1280, 720]
+
+# Web Server Configuration
+server:
+  host: "127.0.0.1"
+  port: 5000
+
+# Storage Configuration
+storage:
+  clips_dir: "clips"
+  logs_dir: "logs"
+  keep_days: 7
+
+# Advanced Configuration
+advanced:
+  queue_maxsize: 64
+  use_deepstream: false  # Legacy setting, use backend.type instead
+  tracking_enabled: false
+  dynamic_backpressure: false
+  min_frame_skip: 0
+  max_frame_skip: 4
+  backpressure_high_watermark: 0.75
+  backpressure_low_watermark: 0.25
