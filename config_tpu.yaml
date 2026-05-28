@@ -1,0 +1,56 @@
+---
+# I-Guard Configuration for Google Cloud TPU and Gemma VLM
+
+# Use the 'tpu' backend for hardware acceleration on Google TPUs
+backend:
+  type: tpu
+  auto_selection:
+    performance_priority: high
+    fallback_enabled: true
+
+# Stage 1 Detection configuration (YOLO optimized for TPU)
+model:
+  path: "models/yolo_tpu.pt"  # TorchScript or Torch model optimized for XLA
+  input_size: 640
+  confidence_threshold: 0.5
+  classes: ["person", "gun", "knife"]
+  events:
+    pointing: true
+    firing: true
+    fall: true
+    assault: true
+    mass_shooter: true
+
+# Stage 2 Verification using latest Gemma (PaliGemma)
+step2:
+  enabled: true
+  model_type: "gemma"
+  model_path: "google/paligemma-3b-pt-224"  # HuggingFace model ID
+  verification_threshold: 0.7
+  prompt: "Is there any violence or weapon present in this image? Answer with details."
+  device: "xla"  # Use XLA (TPU) for verification
+
+  # Async processing for high throughput
+  async_enabled: true
+  max_workers: 4  # TPU can handle multiple parallel inferences efficiently
+  queue_size: 100
+  result_queue_size: 200
+
+# Camera sources
+cameras:
+  - id: tpu_cam_01
+    name: "TPU Entrance Monitor"
+    source: "rtsp://10.0.0.1/live"
+    fps: 30
+    resolution: [1920, 1080]
+
+# Server settings
+server:
+  host: "0.0.0.0"
+  port: 5000
+
+# Storage
+storage:
+  clips_dir: "clips"
+  logs_dir: "logs"
+  keep_days: 14
