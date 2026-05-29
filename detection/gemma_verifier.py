@@ -14,11 +14,18 @@ try:
     import torch_xla
     import torch_xla.core.xla_model as xm
     from transformers import PaliGemmaForConditionalGeneration, PaliGemmaProcessor
-    TPU_AVAILABLE = True
+    TORCH_XLA_AVAILABLE = True
 except ImportError:
-    TPU_AVAILABLE = False
+    TORCH_XLA_AVAILABLE = False
     PaliGemmaForConditionalGeneration = None
     PaliGemmaProcessor = None
+
+try:
+    import jax
+    import jax.numpy as jnp
+    JAX_AVAILABLE = True
+except ImportError:
+    JAX_AVAILABLE = False
 
 LOGGER = logging.getLogger(__name__)
 
@@ -34,23 +41,33 @@ class GemmaVerifier:
         threshold: float = 0.7,
         prompt: str = "detect violence or weapons in this image",
         device: str = "xla",
+        use_jax: bool = False,
         **kwargs
     ):
         self.model_id = model_id
         self.threshold = threshold
         self.prompt = prompt
         self.device_name = device
+        self.use_jax = use_jax
         self.model = None
         self.processor = None
         self.device = None
 
-        if not TPU_AVAILABLE and device == "xla":
+        if use_jax and not JAX_AVAILABLE:
+            LOGGER.warning("JAX requested but not available. Falling back to Torch/XLA.")
+            self.use_jax = False
+
+        if not TORCH_XLA_AVAILABLE and device == "xla" and not self.use_jax:
             LOGGER.warning("TPU (XLA) requested but torch_xla or transformers not available. GemmaVerifier will run in mock mode.")
-        elif TPU_AVAILABLE:
+        elif TORCH_XLA_AVAILABLE or self.use_jax:
             self._initialize_model()
 
     def _initialize_model(self):
         """Initialize the Gemma model on the specified device."""
+        if self.use_jax:
+            self._initialize_jax_model()
+            return
+
         try:
             if self.device_name == "xla":
                 self.device = xm.xla_device()
@@ -64,10 +81,19 @@ class GemmaVerifier:
                 torch_dtype=torch.bfloat16 if self.device_name == "xla" else torch.float32
             ).to(self.device)
             self.model.eval()
-            LOGGER.info("Gemma model loaded successfully.")
+            LOGGER.info("Gemma model loaded successfully (Torch/XLA).")
         except Exception as e:
             LOGGER.error(f"Failed to load Gemma model: {e}")
             self.model = None
+
+    def _initialize_jax_model(self):
+        """Initialize JAX-based model (placeholder for big_vision implementation)."""
+        LOGGER.info(f"Initializing JAX-based Gemma model {self.model_id}...")
+        # In a real implementation, this would use big_vision to load the checkpoint
+        # For now, we'll mark it as initialized if JAX is present
+        if JAX_AVAILABLE:
+            LOGGER.info("JAX environment detected for Gemma.")
+            self._is_jax_ready = True
 
     def verify(self, video_clip: List[np.ndarray], detections_per_frame: Optional[List[List[str]]] = None) -> Dict[str, Any]:
         """
