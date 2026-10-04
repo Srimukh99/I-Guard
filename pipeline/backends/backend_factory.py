@@ -21,6 +21,14 @@ except ImportError:
     DEEPSTREAM_AVAILABLE = False
     DeepStreamBackend = None
 
+# Conditional TPU import
+try:
+    from .tpu_backend import TPUBackend
+    TPU_AVAILABLE = True
+except ImportError:
+    TPU_AVAILABLE = False
+    TPUBackend = None
+
 
 class BackendFactory:
     """Factory for creating and managing backend instances."""
@@ -42,9 +50,28 @@ class BackendFactory:
             self.logger.info("DeepStream backend available")
         else:
             self.logger.info("DeepStream backend not available")
+
+        # Check TPU availability
+        if TPU_AVAILABLE and self._check_tpu_requirements():
+            backends['tpu'] = TPUBackend
+            self.logger.info("TPU backend available")
+        else:
+            self.logger.info("TPU backend not available")
         
         return backends
     
+    def _check_tpu_requirements(self) -> bool:
+        """Check if TPU requirements are met."""
+        try:
+            import torch_xla.core.xla_model as xm
+            # Try to get XLA device to confirm TPU presence
+            device = xm.xla_device()
+            return device is not None
+        except ImportError:
+            return False
+        except Exception:
+            return False
+
     def _check_deepstream_requirements(self) -> bool:
         """Check if DeepStream requirements are met."""
         # Check platform
